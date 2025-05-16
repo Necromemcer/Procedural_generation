@@ -91,11 +91,11 @@ class Grid:
         best_score = self.food_gradient(coords) - self.radiation_gradient(coords)
         best_direction = None
 
-        # Iterate over the (5+speed)x(5+speed) area around the cell
-        for i in range(-(2 + int(speed/2)), (3 + int(speed/2))):
-            for j in range(-(2 + int(speed/2)), (3 + int(speed/2))):
-                if i == 0 and j == 0:
-                    continue  # Skip the cell itself
+        # Iterate over the speed + 2 radius around the cell
+        for i in range(-(2 + speed), (3 + speed)):
+            for j in range(-(2 + speed), (3 + speed)):
+                if (i == 0 and j == 0) or (math.sqrt(i**2 + j**2) > speed):
+                    continue  # Skip the cell itself and constrain the radius
                 # Calculate the new coordinates, considering grid boundaries
                 new_x = max(0, min(self.width - 1, coords[0] + i))
                 new_y = max(0, min(self.height - 1, coords[1] + j))
@@ -266,13 +266,13 @@ class Simulation:
         dy = best_y - y
 
         # Calculate the distance to the best direction
-        distance = math.sqrt(dx**2 + dy**2)
+        distance = math.sqrt(dx**2 + dy**2)        
+        speed = self.bacteria.phenotypes[ID].count('motility') * self.movement_rates['cell']
 
         # If the distance is greater than the speed, move partially in that direction
-        speed = self.bacteria.phenotypes[ID].count('motility') * self.movement_rates['cell']
         if distance > speed:
-            dx = int(round(dx / distance * speed))
-            dy = int(round(dy / distance * speed))
+            dx = int(round(dx * speed / distance))
+            dy = int(round(dy * speed / distance))
 
             # Calculate the new position
             new_x = x + dx
@@ -283,46 +283,73 @@ class Simulation:
             new_y = max(0, min(self.grid.height - 1, new_y))
 
             if self.grid.is_position_occupied((new_x, new_y)):
-                for radius in range(1, speed + 1, -1):
-                    for i in range(-radius, radius + 1, -1):
-                        for j in range(-radius, radius + 1, -1):
-                            if i == 0 and j == 0:
-                                continue  # Skip the current position
-                            # Calculate the new coordinates, considering grid boundaries
-                            alt_x = max(0, min(self.grid.width - 1, x + i))
-                            alt_y = max(0, min(self.grid.height - 1, y + j))
-                            # Check if the position is unoccupied
-                            if not self.grid.is_position_occupied((alt_x, alt_y)):
-                                new_x, new_y = alt_x, alt_y
-                                break
-                        else:
-                            continue
-                        break
-                    else:
-                        continue
-                    break
-            if not self.grid.is_position_occupied((new_x, new_y)):
+                min_distance = float('inf')
+                min_distance_point = None
+                for i in range(0, dx + 1):
+                    for j in range(0, dy + 1):
+                        # Calculate the new coordinates, considering grid boundaries
+                        alt_x = max(0, min(self.grid.width - 1, x + i))
+                        alt_y = max(0, min(self.grid.height - 1, y + j))
+                        # Check if the position is unoccupied
+                        if not self.grid.is_position_occupied((alt_x, alt_y)):
+                            distance = math.sqrt((alt_x - new_x)**2 + (alt_y - new_y)**2)
+                            if distance < min_distance:
+                                min_distance_point = (alt_x, alt_y)
+                                min_distance = distance
+                self.grid.grid[min_distance_point] = 1
+                self.bacteria.positions[ID] = min_distance_point
+                self.bacteria.energy[ID] += self.energy_rates['movement'] * math.sqrt((min_distance_point[0] - x)**2 + (min_distance_point[1] - y)**2)
+            else:
                 self.grid.grid[(new_x, new_y)] = 1
                 self.bacteria.positions[ID] = (new_x, new_y)
                 self.bacteria.energy[ID] += self.energy_rates['movement'] * math.sqrt((new_x - x)**2 + (new_y - y)**2)
-            else:
-                self.grid.grid[(x, y)] = 1
         else:
             self.grid.grid[(best_x, best_y)] = 1
             self.bacteria.positions[ID] = (best_x, best_y)
             self.bacteria.energy[ID] += self.energy_rates['movement'] * math.sqrt((best_x - x)**2 + (best_y - y)**2)
 
-    def random_movement(self, ID):
+    def random_cell_movement(self, ID):
         '''
         Move in random direction according to the available speed
         '''
-        if ID.count('_spore'):
-            speed = self.movement_rates['spore']
-        else:
-            speed = self.bacteria.phenotypes[ID].count('motility') * self.movement_rates['cell']
+        speed = self.bacteria.phenotypes[ID].count('motility') * self.movement_rates['cell']
 
         x, y = self.bacteria.positions[ID]
         self.grid.grid[(x, y)] = 0
+
+        max_distance = 0
+        max_distance_points = []
+        for i in range(-speed, speed):
+            for j in range(-speed, speed):
+                if (i == 0 and j == 0) or (math.sqrt(i**2 + j**2) > speed):
+                    continue  # Skip the current position and constrain the radius
+                # Calculate the new coordinates, considering grid boundaries
+                alt_x = max(0, min(self.grid.width - 1, x + i))
+                alt_y = max(0, min(self.grid.height - 1, y + j))
+                # Check if the position is unoccupied
+                if not self.grid.is_position_occupied((alt_x, alt_y)):
+                    distance = math.sqrt((alt_x - x)**2 + (alt_y - y)**2)
+                    if distance == max_distance:
+                        max_distance_points.append((alt_x, alt_y))
+                    if distance > max_distance:
+                        max_distance_points.clear()
+                        max_distance_points.append((alt_x, alt_y))
+                        max_distance = distance
+        if max_distance_points:
+            choice = random.choice(max_distance_points)
+            self.grid.grid[choice] = 1
+            self.bacteria.positions[ID] = choice
+            self.bacteria.energy[ID] += self.energy_rates['movement'] * math.sqrt((choice[0] - x)**2 + (choice[1] - y)**2) 
+        else:
+            self.grid.grid[(x, y)] = 1
+
+    def random_spore_movement(self, ID):
+        '''
+        Move in random direction according to the available speed
+        '''
+        speed = self.movement_rates['spore']
+
+        x, y = self.bacteria.positions[ID]
 
         # Calculate the new position
         new_x = x + random.choice([-speed, speed])
@@ -332,33 +359,8 @@ class Simulation:
         new_x = max(0, min(self.grid.width - 1, new_x))
         new_y = max(0, min(self.grid.height - 1, new_y))
 
-        if self.grid.is_position_occupied((new_x, new_y)):
-            for radius in range(1, speed + 1, -1):
-                for i in range(-radius, radius + 1, -1):
-                    for j in range(-radius, radius + 1, -1):
-                        if i == 0 and j == 0:
-                            continue  # Skip the current position
-                        # Calculate the new coordinates, considering grid boundaries
-                        alt_x = max(0, min(self.grid.width - 1, x + i))
-                        alt_y = max(0, min(self.grid.height - 1, y + j))
-                        # Check if the position is unoccupied
-                        if not self.grid.is_position_occupied((alt_x, alt_y)):
-                            new_x, new_y = alt_x, alt_y
-                            break
-                    else:
-                        continue
-                    break
-                else:
-                    continue
-                break
-        if not self.grid.is_position_occupied((new_x, new_y)):
-            self.grid.grid[(new_x, new_y)] = 1
-            self.bacteria.positions[ID] = (new_x, new_y)
-            if not ID.count('_spore'):
-                self.bacteria.energy[ID] += self.energy_rates['movement'] * math.sqrt((new_x - x)**2 + (new_y - y)**2) 
-        else:
-            self.grid.grid[(x, y)] = 1
-        
+        self.bacteria.positions[ID] = (new_x, new_y)
+
     def death(self, ID):
         self.grid.grid[self.bacteria.positions[ID]] = 0
         self.bacteria.remove_individuum(ID)
@@ -368,13 +370,17 @@ class Simulation:
 
     def turn(self):
         population_slice = self.bacteria.population.copy()
+        population_slice = list(population_slice)
+        random.shuffle(population_slice)
         to_be_removed = set()
         for ID in population_slice:
             ### Metabolism occurs               
             self.bacteria.metabolize(ID, self.energy_rates, self.grid.food_gradient(self.bacteria.positions[ID]))
+        random.shuffle(population_slice)
         for ID in population_slice:
             ### Mutations occur
             self.bacteria.mutate(ID, self.gene_pool, self.mutation_rates, self.grid.radiation_gradient(self.bacteria.positions[ID]))
+        random.shuffle(population_slice)
         for ID in population_slice:
             ### If bacteria passes the division conditions - it divides. Otherwise skip to action
             if self.division_checkpoint(ID):
@@ -388,19 +394,24 @@ class Simulation:
                         self.bacteria.germinate(ID)
                         to_be_removed.add(ID)
                     else:
-                        self.random_movement(ID)
+                        self.random_spore_movement(ID)
                 ### If it is a cell: try to photosynthesize | move if you can | try to form a spore if things are bad | stay in place
                 else:
                     options = set(self.bacteria.phenotypes[ID])
                     if options:
-                        if 'photosynthesis' in options:
-                            self.bacteria.photosynthesize(ID, self.energy_rates)
-                        elif (self.grid.food_gradient(self.bacteria.positions[ID]) * self.energy_rates['food'] < -self.energy_rates['life_cell']) and 'motility' in options:
+                        if ('photosynthesis' in options) and ('motility' in options):
                             if self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')):
                                 self.towards_better_life(ID, self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')))
                             else:
-                                self.random_movement(ID)
-                        elif (self.grid.food_gradient(self.bacteria.positions[ID]) == 0) and (self.bacteria.energy[ID]) < 1 and 'spore_formation' in options:
+                                self.bacteria.photosynthesize(ID, self.energy_rates)
+                        elif 'photosynthesis' in options:    
+                            self.bacteria.photosynthesize(ID, self.energy_rates)
+                        elif (self.bacteria.energy[ID] > self.movement_rates['cell'] * self.bacteria.phenotypes[ID].count('motility') * self.energy_rates['movement']) and ('motility' in options):
+                            if self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')):
+                                self.towards_better_life(ID, self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')))
+                            else:
+                                self.random_cell_movement(ID)
+                        elif (self.grid.food_gradient(self.bacteria.positions[ID]) == 0) and (self.bacteria.energy[ID]) < 1 and ('spore_formation' in options):
                             self.grid.grid[self.bacteria.positions[ID]] = 0
                             self.bacteria.form_spore(ID)
                             to_be_removed.add(ID)
@@ -415,7 +426,7 @@ class Simulation:
             ### Death due overpopulation
             elif not ID.count('_spore'):
                 live_neighbors = self.grid.count_live_neighbors(self.bacteria.positions[ID])
-                if live_neighbors > 7:
+                if live_neighbors > 6:
                     self.death(ID)
 
     def run(self, steps):
@@ -459,6 +470,7 @@ class Simulation:
             return img, food_gradient, radiation_gradient
 
         ani = animation.FuncAnimation(fig, update_frame, frames=steps, interval=1000, blit=True)
+
         plt.show()
     
     def show(self):
@@ -491,10 +503,10 @@ class Simulation:
         plt.show()
 
 
-seed = {'011100220': 10, '01022220033': 10}
+seed = {'011100330': 10, '00022220033': 10}
 gene_pool = ['0', '1', '2', '3']
 mutation_rates = {'passive': 0.0005, 'division': 0.01, 'radiation': 0.07}
-energy_rates = {'initial': 10, 'life_cell': -0.1, 'life_spore': -0.05, 'food': 3, 'division': -5, 'photosynthesis': 0.1, 'movement': -0.01}
+energy_rates = {'initial': 7, 'life_cell': -0.1, 'life_spore': -0.05, 'food': 3, 'division': -5, 'photosynthesis': 0.2, 'movement': -0.01}
 movement_rates = {'cell': 2, 'spore': 5}
 genotype_to_phenotype = {'photosynthesis': '11', 'motility': '22', 'spore_formation': '33'}
 phenotype_to_color = {
@@ -502,5 +514,10 @@ phenotype_to_color = {
     'motility': (0, 0, 1), # Red
 }
 
-simulation = Simulation(100, 100, 5, 8, 2, 15, gene_pool, mutation_rates, energy_rates, movement_rates, genotype_to_phenotype, phenotype_to_color, seed)
+simulation = Simulation(100, 100, 5, 10, 3, 15, gene_pool, mutation_rates, energy_rates, movement_rates, genotype_to_phenotype, phenotype_to_color, seed)
 simulation.animate(1)
+
+
+# for i in range(100):
+#     simulation.turn()
+#     simulation.check_positions()
