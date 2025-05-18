@@ -6,17 +6,16 @@ This project aims to simulate a bacterial environment where bacteria exhibit dyn
 
 ## Installation
 
-To get started with the project, follow these steps:
+To get started with the project, follow these steps (Python is required):
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/Necromemcer/Procedural_generation.git
+1. Clone the repository (or simply download the file manually):
+    ```bash
+    git clone https://github.com/Necromemcer/Procedural_generation.git
+    cd Procedural_generation
 
 2. Install the required libraries:
     ```bash
-    cd Procedural_generation
     pip install -r requirements.txt
-
 
 3. Execute the file:
     ```bash
