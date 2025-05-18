@@ -1,1 +1,23 @@
-Simulation of bacterial environment with dynamic genotype-to-phenotype relations and (hardcoded) complex behaviour
+# My Endeavors in Procedural Generation and Emergent Behavior
+
+## Bacterial World
+
+This project aims to simulate a bacterial environment where bacteria exhibit dynamic genotype-to-phenotype relations and complex behaviors. The simulation is designed to be modular, allowing for easy extension and customization.
+
+## Installation
+
+To get started with the project, follow these steps:
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Necromemcer/Procedural_generation.git
+
+2. Install the required libraries:
+    ```bash
+    cd Procedural_generation
+    pip install -r requirements.txt
+
+
+3. Execute the file:
+    ```bash
+    python bacterial_world.py
