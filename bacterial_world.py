@@ -5,6 +5,7 @@ import random
 import re
 import string
 import math
+from collections import defaultdict
 
 class Grid:
     def __init__(self, width, height, amount_food, radius_food, amount_radiation, radius_radiation):
@@ -95,7 +96,7 @@ class Grid:
         """
         Compute the best direction of movement based on food and radiation gradients.
         """
-        best_score = self.food_gradient(coords) - self.radiation_gradient(coords)
+        best_score = self.food_gradient(coords) #- self.radiation_gradient(coords)
         best_direction = None
 
         # Iterate over the speed + 2 radius around the cell
@@ -104,15 +105,16 @@ class Grid:
                 if (i == 0 and j == 0) or (math.sqrt(i**2 + j**2) > speed):
                     continue  # Skip the cell itself and constrain the radius
                 # Calculate the new coordinates, considering grid boundaries
-                new_x = max(0, min(self.width - 1, coords[0] + i))
-                new_y = max(0, min(self.height - 1, coords[1] + j))
-                if not self.is_position_occupied((new_x, new_y)):
-                    # Assign a score based on food and radiation
-                    score = self.food_gradient((new_x, new_y)) - self.radiation_gradient((new_x, new_y))
-                    # Update the best direction if the current score is higher
-                    if score > best_score:
-                        best_score = score
-                        best_direction = (new_x, new_y)
+                new_x = coords[0] + i
+                new_y = coords[1] + j
+                if ((0 <= new_x <= self.width - 1) and (0 <= new_y <= self.height - 1)):
+                    if (not self.is_position_occupied((new_x, new_y))):
+                        # Assign a score based on food and radiation
+                        score = self.food_gradient((new_x, new_y)) #- self.radiation_gradient((new_x, new_y))
+                        # Update the best direction if the current score is higher
+                        if score > best_score:
+                            best_score = score
+                            best_direction = (new_x, new_y)
         return best_direction
     
     def display(self):
@@ -211,7 +213,7 @@ class Simulation:
         self.genotype_to_phenotype = genotype_to_phenotype
         self.phenotype_to_color = phenotype_to_color
         self.overpopulation_constant = overpopulation_constant
-        self.log = []
+        self.log = defaultdict(list)
         ### Generate initial population
         initial_population = set()
         initial_genomes = dict()
@@ -244,11 +246,12 @@ class Simulation:
 
     def division_checkpoint(self, ID):
         scenario_1 = (self.bacteria.energy[ID] + self.energy_rates['division'] >= 2) and self.grid.choose_division_direction(self.bacteria.positions[ID], self.overpopulation_constant)
-        scenario_2 = ((self.bacteria.energy[ID] + self.energy_rates['division'] + self.energy_rates['life_cell'] + self.energy_rates['food'] * self.grid.food_gradient(self.bacteria.positions[ID])) > 0) and self.grid.choose_division_direction(self.bacteria.positions[ID], self.overpopulation_constant)
+        scenario_2 = ((self.bacteria.energy[ID] + self.energy_rates['division'] + self.energy_rates['life_cell'] + self.energy_rates['food'] * self.grid.food_gradient(self.bacteria.positions[ID])) >= 1) and self.grid.choose_division_direction(self.bacteria.positions[ID], self.overpopulation_constant)
         return (scenario_1 or scenario_2) and (not ID.count('_spore'))
 
     def division(self, ID):
         self.bacteria.energy[ID] += self.energy_rates['division']
+        ### Generate child ID 
         matches = re.findall(f"{re.escape(ID)}\\.(\\d+)(?=\\.|;|$)", ";".join([ID for ID in self.bacteria.population]))
         # Convert the matched numbers to integers and find the largest number
         if matches:
@@ -318,14 +321,17 @@ class Simulation:
                 self.grid.grid[min_distance_point] = 1
                 self.bacteria.positions[ID] = min_distance_point
                 self.bacteria.energy[ID] += self.energy_rates['movement'] * math.sqrt((min_distance_point[0] - x)**2 + (min_distance_point[1] - y)**2)
+                return min_distance_point
             else:
                 self.grid.grid[(new_x, new_y)] = 1
                 self.bacteria.positions[ID] = (new_x, new_y)
                 self.bacteria.energy[ID] += self.energy_rates['movement'] * math.sqrt((new_x - x)**2 + (new_y - y)**2)
+                return (new_x, new_y)
         else:
             self.grid.grid[(best_x, best_y)] = 1
             self.bacteria.positions[ID] = (best_x, best_y)
             self.bacteria.energy[ID] += self.energy_rates['movement'] * math.sqrt((best_x - x)**2 + (best_y - y)**2)
+            return (best_x, best_y)
 
     def random_cell_movement(self, ID):
         '''
@@ -402,7 +408,7 @@ class Simulation:
             if self.bacteria.energy[ID] <= 0:
                 self.death(ID)
                 to_be_removed_1.add(ID)
-            #     self.log.append(f"{ID} died due to starvation in Energy Phase")
+                self.log[ID].append(f"{ID} died due to starvation in Energy Phase")
             # if not self.check_positions():
             #     self.log.append('Checkpoint_Metabolism')
         if to_be_removed_1:
@@ -418,7 +424,8 @@ class Simulation:
             if self.division_checkpoint(ID):
                 newborn_ID, newborn_position = self.division(ID)
                 self.grid.grid[newborn_position] = 1
-                # self.log.append(f"{ID} gave birth to {newborn_ID} at position {newborn_position}")
+                self.log[ID].append(f"{ID} gave birth to {newborn_ID} at position {newborn_position}")
+                self.log[newborn_ID].append(f"{newborn_ID} was born at position {newborn_position}")
                 # if not self.check_positions():
                 #     self.log.append('Checkpoint_Division')
             ### Actions are taken if no division occured
@@ -430,7 +437,7 @@ class Simulation:
                         germinated_ID, position = self.bacteria.germinate(ID)
                         #to_be_added.add(germinated_ID)
                         to_be_removed_2.add(ID)
-                        # self.log.append(f"{ID} germinated in to {germinated_ID} at {position}")
+                        self.log[ID].append(f"{ID} germinated in to {germinated_ID} at {position}")
                         # if not self.check_positions():
                         #     self.log.append('Checkpoint_Germination')
                     else:
@@ -443,7 +450,9 @@ class Simulation:
                     if options:
                         if ('photosynthesis' in options) and ('motility' in options):
                             if self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')):
-                                self.towards_better_life(ID, self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')))
+                                chosen_direction = self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility'))
+                                actual_direction = self.towards_better_life(ID, self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')))
+                                self.log[ID].append(f"{ID} aimed for {chosen_direction} and moved to {actual_direction}")
                                 # if not self.check_positions():
                                 #     self.log.append('Checkpoint_P&M_Cell_Movement')
                             else:
@@ -452,18 +461,21 @@ class Simulation:
                             self.bacteria.photosynthesize(ID, self.energy_rates)
                         elif (self.bacteria.energy[ID] > self.movement_rates['cell'] * self.bacteria.phenotypes[ID].count('motility') * self.energy_rates['movement']) and ('motility' in options):
                             if self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')):
-                                self.towards_better_life(ID, self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')))
+                                chosen_direction = self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility'))
+                                actual_direction = self.towards_better_life(ID, self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')))
+                                self.log[ID].append(f"{ID} aimed for {chosen_direction} and moved to {actual_direction}")
                                 # if not self.check_positions():
                                 #     self.log.append('Checkpoint_M_Cell_Movement')
                             else:
                                 self.random_cell_movement(ID)
+                                self.log[ID].append(f'{ID} moved in random direction')
                                 # if not self.check_positions():
                                 #     self.log.append('Checkpoint_M_Random_Cell_Movement')
                         elif (self.grid.food_gradient(self.bacteria.positions[ID]) == 0) and (self.bacteria.energy[ID]) < 1 and ('spore_formation' in options):
                             self.grid.grid[self.bacteria.positions[ID]] = 0
                             spore_names, position = self.bacteria.form_spore(ID)
                             to_be_removed_2.add(ID)
-                            # self.log.append(f"{ID} formed spores {spore_names} at {position}")
+                            self.log[ID].append(f"{ID} formed spores {spore_names} at {position}")
                             # if not self.check_positions():
                             #     self.log.append('Checkpoint_Spore_Formation')
         ### Add to the stack those who have been born and remove those who transformed
@@ -479,7 +491,7 @@ class Simulation:
             ### Death due starvation (energy depletion)
             if self.bacteria.energy[ID] <= 0:
                 self.death(ID)
-                # self.log.append(f"{ID} died due to starvation in Death Phase")
+                self.log[ID].append(f"{ID} died due to starvation in Death Phase")
                 # if not self.check_positions():
                 #     self.log.append('Checkpoint_Death_1')
             ### Death due overpopulation
@@ -487,7 +499,7 @@ class Simulation:
                 live_neighbors = self.grid.count_live_neighbors(self.bacteria.positions[ID])
                 if live_neighbors > self.overpopulation_constant:
                     self.death(ID)
-                    # self.log.append(f"{ID} died due overpopulation in Death Phase")
+                    self.log[ID].append(f"{ID} died due overpopulation in Death Phase")
                     # if not self.check_positions():
                     #     self.log.append('Checkpoint_Death_2')
 
@@ -565,7 +577,7 @@ class Simulation:
         plt.show()
 
 
-seed = {'011100330': 20, '00022220033': 20}
+seed = {'0011100330': 10, '0022220033': 10}
 gene_pool = ['0', '1', '2', '3']
 mutation_rates = {'passive': 0.0005, 'division': 0.01, 'radiation': 0.07}
 energy_rates = {'initial': 7, 'life_cell': -0.1, 'life_spore': -0.05, 'food': 3, 'division': -5, 'photosynthesis': 0.2, 'movement': -0.05}
@@ -573,9 +585,9 @@ movement_rates = {'cell': 2, 'spore': 5}
 genotype_to_phenotype = {'photosynthesis': '11', 'motility': '22', 'spore_formation': '33'}
 phenotype_to_color = {
     'photosynthesis': (0, 1, 0),  # Green
-    'motility': (0, 0, 1), # Red
+    'motility': (0, 0, 1), # Blue
 }
-overpopulation_constant = 6
+overpopulation_constant = 5
 
-simulation = Simulation(200, 200, 5, 30, 6, 20, gene_pool, mutation_rates, energy_rates, movement_rates, genotype_to_phenotype, phenotype_to_color, overpopulation_constant, seed)
+simulation = Simulation(150, 150, 4, 30, 6, 20, gene_pool, mutation_rates, energy_rates, movement_rates, genotype_to_phenotype, phenotype_to_color, overpopulation_constant, seed)
 simulation.animate(1)
