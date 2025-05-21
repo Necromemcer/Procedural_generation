@@ -1,10 +1,10 @@
 # My Endeavors in Procedural Generation and Emergent Behavior
 
-## Bacterial World
+## 1. Bacterial World
 
 This project aims to simulate a bacterial environment where bacteria exhibit dynamic genotype-to-phenotype relations and complex behaviors. The simulation is designed to be modular, allowing for easy extension and customization.
 
-## Installation
+### Installation
 
 To get started with the project, follow these steps (Python is required):
 
