@@ -214,6 +214,7 @@ class Simulation:
         self.phenotype_to_color = phenotype_to_color
         self.overpopulation_constant = overpopulation_constant
         self.log = defaultdict(list)
+        self.seed_population = defaultdict(list)
         ### Generate initial population
         initial_population = set()
         initial_genomes = dict()
@@ -225,6 +226,7 @@ class Simulation:
                 ID = ''.join(random.choice(string.ascii_letters) for _ in range(int(round(math.log(sum(list(seed.values())), 10) + 1, 0))))
                 initial_population.add(ID)
                 initial_genomes[ID] = list(seed.keys())[genome]
+                self.seed_population[f'Progenitor population {list(seed.keys())[genome]}'].append(ID)
                 initial_phenotypes[ID] = [trait for trait in list(self.genotype_to_phenotype.keys()) for occurence in re.findall(f'(?=({self.genotype_to_phenotype[trait]}))', list(seed.keys())[genome])]
                 initial_positions[ID] = (random.randrange(self.grid.width), random.randrange(self.grid.height))
                 self.grid.grid[initial_positions[ID]] = 1
@@ -394,12 +396,19 @@ class Simulation:
     def check_positions(self):
         return bool(len([bacterium for bacterium in self.bacteria.population if not bacterium.count('_spore')]) == sum(sum(self.grid.grid)))
 
+    def check_lethal_mutation(self, ID):
+        if not ID.count('_spore'):
+            if self.bacteria.phenotypes[ID].count('lethal'):
+                self.death(ID)
+                return 'dead'
+
     def turn(self):
         population_slice = self.bacteria.population.copy()
         queue = list(population_slice)
-        to_be_added = set()
-        to_be_removed_1 = set()
-        to_be_removed_2 = set()
+        #to_be_added = set()
+        to_be_removed_metabolism = set()
+        to_be_removed_mutation = set()
+        to_be_removed_turn = set()
         random.shuffle(queue)
         for ID in queue:
             ### Metabolism occurs               
@@ -407,39 +416,50 @@ class Simulation:
             ### Death due starvation (energy depletion)
             if self.bacteria.energy[ID] <= 0:
                 self.death(ID)
-                to_be_removed_1.add(ID)
+                to_be_removed_metabolism.add(ID)
                 self.log[ID].append(f"{ID} died due to starvation in Energy Phase")
             # if not self.check_positions():
             #     self.log.append('Checkpoint_Metabolism')
-        if to_be_removed_1:
-            for ID in to_be_removed_1:
+        if to_be_removed_metabolism:
+            for ID in to_be_removed_metabolism:
                 queue.remove(ID)
         random.shuffle(queue)
         for ID in queue:
             ### Mutations occur
             self.bacteria.mutate(ID, self.gene_pool, self.mutation_rates, self.grid.radiation_gradient(self.bacteria.positions[ID]))
+            if self.check_lethal_mutation(ID):
+                to_be_removed_mutation.add(ID)
+                self.log[ID].append(f"{ID} died due to acquiring a lethal mutation in Mutation Phase")
+        if to_be_removed_mutation:
+            for ID in to_be_removed_mutation:
+                queue.remove(ID)
         random.shuffle(queue)
         for ID in queue:
             ### If bacteria passes the division conditions - it divides. Otherwise skip to action
             if self.division_checkpoint(ID):
                 newborn_ID, newborn_position = self.division(ID)
-                self.grid.grid[newborn_position] = 1
-                self.log[ID].append(f"{ID} gave birth to {newborn_ID} at position {newborn_position}")
-                self.log[newborn_ID].append(f"{newborn_ID} was born at position {newborn_position}")
+                if not self.check_lethal_mutation(newborn_ID):
+                    self.grid.grid[newborn_position] = 1
+                    self.log[ID].append(f"{ID} gave birth to {newborn_ID} at position {newborn_position}")
+                    self.log[newborn_ID].append(f"{newborn_ID} was born at position {newborn_position}")
                 # if not self.check_positions():
                 #     self.log.append('Checkpoint_Division')
+                else:
+                    self.log[newborn_ID].append(f"{newborn_ID} died due to acquiring a lethal mutation during birth")
             ### Actions are taken if no division occured
             else:
                 ### If it is a spore: germinate if conditions are grateful, move otherwise
                 if ID.count('_spore'):
                     if (self.grid.food_gradient(self.bacteria.positions[ID]) * self.energy_rates['food'] >= -self.energy_rates['life_cell']) and (not self.grid.is_position_occupied(self.bacteria.positions[ID])) and (self.grid.count_live_neighbors(self.bacteria.positions[ID]) <= self.overpopulation_constant):
-                        self.grid.grid[self.bacteria.positions[ID]] = 1
-                        germinated_ID, position = self.bacteria.germinate(ID)
-                        #to_be_added.add(germinated_ID)
-                        to_be_removed_2.add(ID)
-                        self.log[ID].append(f"{ID} germinated in to {germinated_ID} at {position}")
+                        germinated_ID, germinated_position = self.bacteria.germinate(ID)
+                        to_be_removed_turn.add(ID)
+                        if not self.check_lethal_mutation(germinated_ID):
+                            self.grid.grid[germinated_position] = 1
+                            self.log[ID].append(f"{ID} germinated into {germinated_ID} at {germinated_position}")
                         # if not self.check_positions():
                         #     self.log.append('Checkpoint_Germination')
+                        else:
+                            self.log[germinated_ID].append(f"{germinated_ID} died due to experiencing a lethal mutation upon germination")
                     else:
                         self.random_spore_movement(ID)
                         # if not self.check_positions():
@@ -449,7 +469,7 @@ class Simulation:
                     options = set(self.bacteria.phenotypes[ID])
                     if options:
                         if ('photosynthesis' in options) and ('motility' in options):
-                            if self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')):
+                            if self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')) and (self.bacteria.energy[ID] > self.bacteria.phenotypes[ID].count('motility') * self.energy_rates['movement']):
                                 chosen_direction = self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility'))
                                 actual_direction = self.towards_better_life(ID, self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')))
                                 self.log[ID].append(f"{ID} aimed for {chosen_direction} and moved to {actual_direction}")
@@ -459,7 +479,7 @@ class Simulation:
                                 self.bacteria.photosynthesize(ID, self.energy_rates)
                         elif 'photosynthesis' in options:    
                             self.bacteria.photosynthesize(ID, self.energy_rates)
-                        elif (self.bacteria.energy[ID] > self.movement_rates['cell'] * self.bacteria.phenotypes[ID].count('motility') * self.energy_rates['movement']) and ('motility' in options):
+                        elif (self.bacteria.energy[ID] > self.bacteria.phenotypes[ID].count('motility') * self.energy_rates['movement']) and ('motility' in options):
                             if self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')):
                                 chosen_direction = self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility'))
                                 actual_direction = self.towards_better_life(ID, self.grid.choose_movement_direction(self.bacteria.positions[ID], self.bacteria.phenotypes[ID].count('motility')))
@@ -474,17 +494,16 @@ class Simulation:
                         elif (self.grid.food_gradient(self.bacteria.positions[ID]) == 0) and (self.bacteria.energy[ID]) < 1 and ('spore_formation' in options):
                             self.grid.grid[self.bacteria.positions[ID]] = 0
                             spore_names, position = self.bacteria.form_spore(ID)
-                            to_be_removed_2.add(ID)
+                            to_be_removed_turn.add(ID)
                             self.log[ID].append(f"{ID} formed spores {spore_names} at {position}")
                             # if not self.check_positions():
                             #     self.log.append('Checkpoint_Spore_Formation')
-        ### Add to the stack those who have been born and remove those who transformed
-        if to_be_added:
-            for ID in to_be_added:
-                queue.append(ID)
-        if to_be_removed_2:
-            for ID in to_be_removed_2:
-                queue.remove(ID)
+        if to_be_removed_turn:
+            for ID in to_be_removed_turn:
+                try:
+                    queue.remove(ID)
+                except:
+                    print(ID)
         # if not self.check_positions():
         #         self.log.append('Checkpoint_Before_Death')
         for ID in queue:
@@ -503,16 +522,18 @@ class Simulation:
                     # if not self.check_positions():
                     #     self.log.append('Checkpoint_Death_2')
 
+    def count_children(self, ID):
+        return len(re.findall(f"{re.escape(ID)}", ";".join([ID for ID in self.bacteria.population])))
+
+    def position_to_name(self, coords):
+        return list(self.bacteria.positions.keys())[list(self.bacteria.positions.values()).index(coords)]
+
     def run(self, steps):
         for _ in range(steps):
             self.turn()
 
-    def animate(self, steps):
+    def animate(self, steps, offspring_stats, save_to_gif):
         fig, ax = plt.subplots()
-
-        # Set the background color of the figure and the axes to white
-        #fig.patch.set_facecolor('white')
-        #ax.set_facecolor('white')
 
         # Initialize the grid for display
         display_grid = np.zeros((self.grid.width, self.grid.height, 3))
@@ -521,6 +542,9 @@ class Simulation:
         img = ax.imshow(display_grid)
         food_gradient = ax.imshow(self.grid.food_grid, cmap='Reds', alpha=0.3)
         radiation_gradient = ax.imshow(self.grid.radiation_grid, cmap='Purples', alpha=0.3)
+
+        # Initialize text for statistics
+        stats_text = ax.text(1.02, 0.95, '', transform=ax.transAxes, verticalalignment='top', fontsize=12)
 
         def update_frame(frame):
             self.turn()
@@ -541,13 +565,30 @@ class Simulation:
             food_gradient.set_array(self.grid.food_grid)
             radiation_gradient.set_array(self.grid.radiation_grid)
 
+            if offspring_stats:
+                # Update the statistics text
+                population_stats = {}
+                progenitor_stats = {}
+                for population in range(len(list(self.seed_population.values()))):
+                    population_stats[list(self.seed_population.keys())[population]] = 0
+                    for progenitor in list(self.seed_population.values())[population]:
+                        population_stats[list(self.seed_population.keys())[population]] += self.count_children(progenitor)
+                        progenitor_stats[progenitor] = self.count_children(progenitor)
+
+                stats_text_content = f"{'\n'.join([f'{key}: {value}' for key, value in progenitor_stats.items()])}\n\n\n{'\n'.join([f'{key}: {value}' for key, value in population_stats.items()])}"
+                stats_text.set_text(stats_text_content)
+                return img, food_gradient, radiation_gradient, stats_text
+
             return img, food_gradient, radiation_gradient
 
-        ani = animation.FuncAnimation(fig, update_frame, frames=steps, interval=1000, blit=True)
+        ani = animation.FuncAnimation(fig, update_frame, frames=steps, interval=300, blit=False)
 
-        plt.show()
+        if not save_to_gif:
+            plt.show()
+        else:
+            ani.save(f"BW_animation_{steps}_steps.gif")
     
-    def show(self):
+    def show(self, offspring_stats):
         fig, ax = plt.subplots()
 
         # Initialize the grid for display
@@ -557,6 +598,9 @@ class Simulation:
         img = ax.imshow(display_grid)
         food_gradient = ax.imshow(self.grid.food_grid, cmap='Reds', alpha = 0.3)
         radiation_gradient = ax.imshow(self.grid.radiation_grid, cmap='Purples', alpha = 0.3)
+
+        # Initialize text for statistics
+        stats_text = ax.text(1.02, 0.95, '', transform=ax.transAxes, verticalalignment='top', fontsize=12)
 
         # Reset the display grid
         display_grid.fill(1) # empty color = white
@@ -574,20 +618,33 @@ class Simulation:
         food_gradient.set_array(self.grid.food_grid)
         radiation_gradient.set_array(self.grid.radiation_grid)
 
+        if offspring_stats:
+                # Update the statistics text
+                population_stats = {}
+                progenitor_stats = {}
+                for population in range(len(list(self.seed_population.values()))):
+                    population_stats[list(self.seed_population.keys())[population]] = 0
+                    for progenitor in list(self.seed_population.values())[population]:
+                        population_stats[list(self.seed_population.keys())[population]] += self.count_children(progenitor)
+                        progenitor_stats[progenitor] = self.count_children(progenitor)
+
+                stats_text_content = f"{'\n'.join([f'{key}: {value}' for key, value in progenitor_stats.items()])}\n\n\n{'\n'.join([f'{key}: {value}' for key, value in population_stats.items()])}"
+                stats_text.set_text(stats_text_content)
+
         plt.show()
 
 
-seed = {'0011100330': 10, '0022220033': 10}
+seed = {'0011100333': 10, '0022220033': 10}
 gene_pool = ['0', '1', '2', '3']
 mutation_rates = {'passive': 0.0005, 'division': 0.01, 'radiation': 0.07}
-energy_rates = {'initial': 7, 'life_cell': -0.1, 'life_spore': -0.05, 'food': 3, 'division': -5, 'photosynthesis': 0.2, 'movement': -0.05}
+energy_rates = {'initial': 7, 'life_cell': -0.1, 'life_spore': -0.01, 'food': 3, 'division': -5, 'photosynthesis': 0.2, 'movement': -0.05}
 movement_rates = {'cell': 2, 'spore': 5}
-genotype_to_phenotype = {'photosynthesis': '11', 'motility': '22', 'spore_formation': '33'}
+genotype_to_phenotype = {'photosynthesis': '11', 'motility': '22', 'spore_formation': '33', 'lethal': '000'}
 phenotype_to_color = {
     'photosynthesis': (0, 1, 0),  # Green
     'motility': (0, 0, 1), # Blue
 }
 overpopulation_constant = 5
 
-simulation = Simulation(150, 150, 4, 30, 6, 20, gene_pool, mutation_rates, energy_rates, movement_rates, genotype_to_phenotype, phenotype_to_color, overpopulation_constant, seed)
-simulation.animate(1)
+simulation = Simulation(150, 150, 5, 30, 5, 30, gene_pool, mutation_rates, energy_rates, movement_rates, genotype_to_phenotype, phenotype_to_color, overpopulation_constant, seed)
+simulation.animate(300, offspring_stats=True, save_to_gif=False)
