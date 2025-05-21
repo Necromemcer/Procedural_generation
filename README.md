@@ -20,3 +20,8 @@ To get started with the project, follow these steps (Python is required):
 3. Execute the file:
     ```bash
     python bacterial_world.py
+
+
+### Example animation
+
+!(demo.gif)
