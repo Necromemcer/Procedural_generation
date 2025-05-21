@@ -24,4 +24,4 @@ To get started with the project, follow these steps (Python is required):
 
 ### Example animation
 
-!(demo.gif)
+![Demo](demo.gif)
